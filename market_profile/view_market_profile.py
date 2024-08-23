@@ -54,11 +54,19 @@ def plot_market_profile(tpo_dic:Dict, df_td_trade:pd.DataFrame) -> go.Figure:
         showlegend=False,
         hovermode='closest',
         paper_bgcolor='#F8EDE3',
+        xaxis=dict(
+            tickmode='linear',
+            nticks=len(tpo_dic.values())
+        ),
         xaxis2=dict(
             rangeslider=dict(
                 visible=False
             )
-        )
+        ),
+        yaxis=dict(
+            side='right',
+            tickformat=','
+        ),
     )
     return fig
 
@@ -112,20 +120,23 @@ def plot_mp_app(underlying:Underlying, is_read_data:bool=False) -> go.Figure:
                                 style=style_element,
                                 children = [
                                     dash_table.DataTable(
-                                        id='price_table',
-                                        data=df_mp[['close', 'skewness', 'kurtosis']].copy().reset_index().to_dict('records'),
-                                        columns=[
-                                            {'name': 'Trade Date', 'id': 'trade_date'},
-                                            {'name': 'Close', 'id': 'close', 'type': 'numeric'},
-                                            {'name': 'Skewness', 'id': 'skewness', 'type': 'numeric'},
-                                            {'name': 'Kurtosis', 'id': 'kurtosis', 'type': 'numeric'},
-                                        ],
-                                        style_cell={'textAlign': 'left'},
+                                        id          ='price_table',
+                                        data        =df_mp[['close', 'skewness', 'kurtosis']].copy().reset_index().to_dict('records'),
+                                        columns     =[
+                                                        {'name': 'Trade Date', 'id': 'trade_date'},
+                                                        {'name': 'Close', 'id': 'close', 'type': 'numeric'},
+                                                        {'name': 'Skewness', 'id': 'skewness', 'type': 'numeric'},
+                                                        {'name': 'Kurtosis', 'id': 'kurtosis', 'type': 'numeric'},
+                                                    ],
+                                        sort_by     =[{'column_id': 'kurtosis', 'direction': 'asc'}],
+                                        sort_action ='native',
+                                        active_cell ={'row': 0, 'column': 0, 'column_id': 'trade_date'},
+                                        style_cell  ={'textAlign': 'left'},
                                         style_cell_conditional=[
-                                            {'if': {'column_id': 'Close'}, 'textAlign': 'right'},
-                                            {'if': {'column_id': 'Skewness'}, 'textAlign': 'right'},
-                                            {'if': {'column_id': 'Kurtosis'}, 'textAlign': 'right'},
-                                        ],
+                                                        {'if': {'column_id': 'Close'}, 'textAlign': 'right'},
+                                                        {'if': {'column_id': 'Skewness'}, 'textAlign': 'right'},
+                                                        {'if': {'column_id': 'Kurtosis'}, 'textAlign': 'right'},
+                                                    ],
                                         style_header={'backgroundColor': 'rgb(230, 230, 230)', 'fontWeight': 'bold'},
                                         page_size=20,
                                     )
@@ -144,8 +155,21 @@ def plot_mp_app(underlying:Underlying, is_read_data:bool=False) -> go.Figure:
     )
 
     @app.callback(
+        Output('price_table', 'data'),
+        Input('price_table', 'sort_by'),
+        State('price_table', 'data'),
+    )
+    def update_table_order(sort_by, tableData):
+        if not sort_by:
+            raise PreventUpdate
+        cprint(f'tableData type: {type(tableData)}', 'yellow')
+        cprint(f'tableData: {tableData}', 'blue') 
+        return sorted(tableData, key=lambda x: x[sort_by[0]['column_id']], reverse=sort_by[0]['direction'] == 'desc')
+
+
+    # show figure for the selected trade date
+    @app.callback(
         [
-            # Output('current_ref', 'data'),
             Output('price_table', 'style_data_conditional'),
             Output('graph_area', 'figure'),
         ],
