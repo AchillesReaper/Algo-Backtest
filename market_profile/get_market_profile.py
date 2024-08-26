@@ -26,8 +26,9 @@ def combine_rows(df_td:pd.DataFrame, start_time:str, end_time:str) -> pd.DataFra
     return df_td
 
 
-def get_data_for_mp(underlying:Underlying) -> pd.DataFrame:
+def get_data_for_mp(underlying:Underlying, resolution:str= IBBarSize.MIN_30) -> pd.DataFrame:
     '''
+    parameter resolution: '30min' or '1day'
     This is custom function to get the custom market data for constructing daily market profil.
     1. get 30 min data for the underlying
     2. combining: </br> 
@@ -35,7 +36,7 @@ def get_data_for_mp(underlying:Underlying) -> pd.DataFrame:
         b. the rows btw 21:30 to 02:30 into one </br>
     3. return the cleaned dataFrame { index:<i>datetime</i>, columns:<i>['open', 'high', 'low', 'close', 'volume', 'expiry', 'trade_date']</i>}
     '''
-    underlying.barSizeSetting = IBBarSize.MIN_30
+    underlying.barSizeSetting = resolution
     df_raw = get_spot_future_ib(underlying)
     df_raw = df_raw[['datetime', 'open', 'high', 'low', 'close', 'volume', 'expiry', 'trade_date']]
     df_raw.set_index('datetime', inplace=True)
@@ -45,8 +46,8 @@ def get_data_for_mp(underlying:Underlying) -> pd.DataFrame:
         df_td = df_raw[df_raw['trade_date'] == td]        
         # combin the rows btw 17:00 to 21:29 into one
         df_td = combine_rows(df_td, '17:00', '21:29')
-        # combin the rows btw 21:30 to 02:30 into one
-        df_td = combine_rows(df_td, '21:30', '02:30')
+        # combin the rows btw 21:30 to 03:30 into one
+        df_td = combine_rows(df_td, '21:30', '03:30')
         df_clean = df_clean._append(df_td)
 
     return df_clean
@@ -151,7 +152,7 @@ if __name__ == "__main__":
         end_date='2024-01-31',
     )
 
-    df_clean = get_data_for_mp(underlying)
+    df_clean = get_data_for_mp(underlying, IBBarSize.MIN_15)
     print(df_clean.head())
     df_mp = gen_market_profile(df_clean)
     print(df_mp.head())

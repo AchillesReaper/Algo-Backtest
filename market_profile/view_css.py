@@ -9,14 +9,13 @@ style_root_div = {
 
 style_header = {
     'backgroundColor': '#D0B8A8', 
-    'height': '60px',
     'width': '100%',
     'maxHeight': '10vh',
+    'display': 'flex', 
     'justifyContent': 'center', 
     'fontSize': 30, 
     'fontfamily': 'Arial', 
     'margin': 'auto', 
-    'padding': '10px',
 }
 
 style_body = {
