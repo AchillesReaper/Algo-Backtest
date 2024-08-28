@@ -81,28 +81,29 @@ def gen_market_profile(df_clean:pd.DataFrame)->pd.DataFrame:
         volume_list.append(df_td["volume"].sum())
 
         # calculate the market profile varibales
-        td_tpo_dist = {}
+        td_tpo_dict = {}
         price_record = []
+        
+        td_tpo_dict_start   = (df_td['low'].min()/5).__ceil__() * 5
+        td_tpo_dict_end     = (df_td['high'].max()/5).__ceil__() * 5
+        for tag in range(td_tpo_dict_start, td_tpo_dict_end+1, 5):
+            td_tpo_dict[tag] = 0
         for index, row in df_td.iterrows():
-            for price in range(row["low"], row["high"] + 1):
-                # 5 points per TPO
-                if price % 5 == 0:
-                    if price not in td_tpo_dist:
-                        td_tpo_dist[price] = 1
-                    elif price in td_tpo_dist:
-                        td_tpo_dist[price] += 1
-                    # for value area calculation later
-                    price_record.append(price)
-        td_tpo_dist = {
-            k: v for k, v in sorted(td_tpo_dist.items(), key=lambda item: item[0])
+            price_record += list(range(row['low'], row['high']+1))
+            for tag in td_tpo_dict:
+                if tag >= row['low'] and tag <= row['high']+4:
+                    td_tpo_dict[tag] += 1
+
+        td_tpo_dict = {
+            k: v for k, v in sorted(td_tpo_dict.items(), key=lambda item: item[0])
         }
-        tpo_count_list.append(td_tpo_dist)
+        tpo_count_list.append(td_tpo_dict)
 
         # for pocs[], VAL[], VAH[], and skewness[]
-        if len(td_tpo_dist) > 0:
-            td_poc_count = max(td_tpo_dist.values())
+        if len(td_tpo_dict) > 0:
+            td_poc_count = max(td_tpo_dict.values())
             td_poc = [
-                price for price, count in td_tpo_dist.items() if count == td_poc_count
+                price for price, count in td_tpo_dict.items() if count == td_poc_count
             ]
 
             tpo_stdev = int(np.std(price_record, ddof=1))

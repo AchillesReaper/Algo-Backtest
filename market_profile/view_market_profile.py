@@ -1,5 +1,6 @@
 import ast
-from typing import Dict
+import os
+from typing import Dict, List
 import pandas as pd
 from dash import Dash, html, dcc, Output, Input, State, dash_table
 from dash.exceptions import PreventUpdate
@@ -17,7 +18,7 @@ from view_css import style_root_div, style_header, style_body, style_body_sub_di
 
 
 
-def plot_market_profile(tpo_dic:Dict, df_td_trade:pd.DataFrame) -> go.Figure:
+def plot_market_profile(df_tpo:pd.DataFrame, df_td_trade:pd.DataFrame) -> go.Figure:
     '''
     This is custom function to plot the candlestick chart for the trade date.
     '''
@@ -28,11 +29,13 @@ def plot_market_profile(tpo_dic:Dict, df_td_trade:pd.DataFrame) -> go.Figure:
     )
     fig.add_trace(
         go.Bar(
-            x=list(tpo_dic.values()),
-            y=list(tpo_dic.keys()),
+            # x=list(tpo_dic.values()),
+            # y=list(tpo_dic.keys()),
+            x = df_tpo['count'],
+            y = df_tpo['price'],
             name='TPO',
             orientation='h',
-            marker_color='blue',
+            marker_color=df_tpo['color'],
         ),
         row=1, col=1,
     )
@@ -56,30 +59,40 @@ def plot_market_profile(tpo_dic:Dict, df_td_trade:pd.DataFrame) -> go.Figure:
         paper_bgcolor='#F8EDE3',
         xaxis=dict(
             tickmode='linear',
-            nticks=len(tpo_dic.values())
+            nticks=len(df_tpo['count']),
+            showspikes=True, spikemode='across', spikesnap='cursor', showline=True
         ),
         xaxis2=dict(
-            rangeslider=dict(
-                visible=False
-            )
+            rangeslider=dict(visible=False),
+            showspikes=True, spikemode='across', spikesnap='cursor', showline=True
         ),
         yaxis=dict(
             side='right',
-            tickformat=','
+            tickformat=',',
+            showspikes=True, spikemode='across', spikesnap='cursor', showline=True
+        ),
+        yaxis2=dict(
+            side='right',
+            tickformat=',',
+            showspikes=True, spikemode='across', spikesnap='cursor', showline=True
         ),
     )
     return fig
 
 
-def plot_mp_app(underlying:Underlying, is_read_data:bool=False) -> go.Figure:
+def plot_mp_app(underlying:Underlying, is_read_data:bool=False, resolution:str= IBBarSize.MIN_30, clean_path:str='', mp_path:str ='') -> go.Figure:
     '''
     This is custom function to visualize the market profile.
+    1. if is_read_data is True, read the data from the local file.
+    2. if is_read_data is False, get the data from the IB server. <b> resolution </b> comes into play for this case.
     '''
     if is_read_data:
-        df_clean    = pd.read_csv('data/market_profile/hsi_day_1_clean.csv', index_col=0)
-        df_mp       = pd.read_csv('data/market_profile/hsi_day_1_mp.csv', index_col=0)
+        df_clean            = pd.read_csv(clean_path, index_col=0)
+        df_mp               = pd.read_csv(mp_path, index_col=0)
+        df_mp['tpo_count']  = df_mp['tpo_count'].apply(ast.literal_eval)
+        df_mp['pocs']       = df_mp['pocs'].apply(ast.literal_eval)
     else:
-        df_clean    = get_data_for_mp(underlying)
+        df_clean    = get_data_for_mp(underlying, resolution)
         df_mp       = gen_market_profile(df_clean)
 
     fig = make_subplots(
@@ -100,7 +113,7 @@ def plot_mp_app(underlying:Underlying, is_read_data:bool=False) -> go.Figure:
                 id          ="header", 
                 style       =style_header,
                 className   ='row', 
-                children    ='Market Profile',
+                children    =html.H2('Market Profile'),
             ),
             html.Div(
                 id      ='body',
@@ -133,12 +146,12 @@ def plot_mp_app(underlying:Underlying, is_read_data:bool=False) -> go.Figure:
                                         active_cell ={'row': 0, 'column': 0, 'column_id': 'trade_date'},
                                         style_cell  ={'textAlign': 'left'},
                                         style_cell_conditional=[
-                                                        {'if': {'column_id': 'Close'}, 'textAlign': 'right'},
-                                                        {'if': {'column_id': 'Skewness'}, 'textAlign': 'right'},
-                                                        {'if': {'column_id': 'Kurtosis'}, 'textAlign': 'right'},
+                                                        {'if': {'column_id': 'close'}, 'textAlign': 'right'},
+                                                        {'if': {'column_id': 'skewness'}, 'textAlign': 'right'},
+                                                        {'if': {'column_id': 'kurtosis'}, 'textAlign': 'right'},
                                                     ],
                                         style_header={'backgroundColor': 'rgb(230, 230, 230)', 'fontWeight': 'bold'},
-                                        page_size=20,
+                                        page_size=26,
                                     )
                                 ]
                             )
@@ -162,10 +175,21 @@ def plot_mp_app(underlying:Underlying, is_read_data:bool=False) -> go.Figure:
     def update_table_order(sort_by, tableData):
         if not sort_by:
             raise PreventUpdate
-        cprint(f'tableData type: {type(tableData)}', 'yellow')
-        cprint(f'tableData: {tableData}', 'blue') 
+        # cprint(f'tableData type: {type(tableData)}', 'yellow')
+        # cprint(f'tableData: {tableData}', 'blue') 
         return sorted(tableData, key=lambda x: x[sort_by[0]['column_id']], reverse=sort_by[0]['direction'] == 'desc')
 
+
+    def color_tag(price:int, val:int, vah:int, pocs:List[int]) -> str:
+        '''
+        This is custom function to color the price based on the market profile.
+        '''
+        if price in pocs:
+            return 'gold'
+        elif (price >= val and price <= vah):
+            return 'yellow'
+        else:
+            return 'blue'
 
     # show figure for the selected trade date
     @app.callback(
@@ -192,10 +216,15 @@ def plot_mp_app(underlying:Underlying, is_read_data:bool=False) -> go.Figure:
         }]
         # retrieve the data for the selected trade date
         df_td_trade = df_clean[df_clean['trade_date'] == td]
-        tpo_dic     = df_mp[df_mp.index == td]['tpo_count'].to_dict()[td]
-        tpo_dic     = ast.literal_eval(tpo_dic)
-        # print(list(tpo_dic.keys()))
-        fig         = plot_market_profile(tpo_dic, df_td_trade)
+        tpo_dict    = df_mp[df_mp.index == td]['tpo_count'].to_dict()[td]
+        pocs        = list(map(int, df_mp[df_mp.index == td]['pocs'].to_dict()[td]))
+        val         = df_mp[df_mp.index == td]['val'].to_dict()[td]
+        vah         = df_mp[df_mp.index == td]['vah'].to_dict()[td]
+
+        df_tpo = pd.DataFrame(tpo_dict.items(), columns=['price', 'count'])
+
+        df_tpo['color'] = [color_tag(price, val, vah, pocs) for price in df_tpo['price']]
+        fig = plot_market_profile(df_tpo, df_td_trade)
 
         return style_data_conditional, fig
     
@@ -210,10 +239,16 @@ if __name__ == "__main__":
         start_date='2024-01-01',
         end_date='2024-01-31',
     )
-    # folder_path='data/market_profile'
-    # if not os.path.exists(folder_path): os.makedirs(folder_path)
-    # df_clean    = get_data_for_mp(underlying)
-    # df_mp       = gen_market_profile(df_clean)
-    # df_clean.to_csv(f'{folder_path}/hsi_day_1_clean.csv', index=True)
-    # df_mp.to_csv(f'{folder_path}/hsi_day_1_mp.csv', index=True)
-    plot_mp_app(underlying, True)
+    folder_path='data/market_profile'
+    is_read_data = False
+    resolution = IBBarSize.MIN_30
+
+    clean_path = f'{folder_path}/{underlying.symbol}_{resolution.replace(' ', '')}_clean.csv'
+    mp_path    = f'{folder_path}/{underlying.symbol}_{resolution.replace(' ', '')}_mp.csv'
+    if not is_read_data:
+        if not os.path.exists(folder_path): os.makedirs(folder_path)
+        df_clean    = get_data_for_mp(underlying, resolution)
+        df_mp       = gen_market_profile(df_clean)
+        df_clean.to_csv(clean_path, index=True)
+        df_mp.to_csv(mp_path, index=True)
+    plot_mp_app(underlying, is_read_data, resolution, clean_path, mp_path)
