@@ -57,7 +57,7 @@ def get_data_for_mp(underlying:Underlying, folder_path:str, resolution:str= IBBa
     return df_clean
 
 
-def gen_market_profile(underlying:Underlying, resolution:str= IBBarSize.MIN_30, is_update_data:bool=True, folder_path:str='')->pd.DataFrame:
+def gen_market_profile(folder_path:str, underlying:Underlying, resolution:str= IBBarSize.MIN_30, is_update_data:bool=True)->pd.DataFrame:
     '''
     This is custom function to transform 30min data into daily market profile.
     Return a df with columns: ['trade_date', 'open', 'high', 'low', 'close', 'volume', 'skewness', 'kurtosis', 'val', 'vah', 'pocs', 'tpo_count']

@@ -91,7 +91,7 @@ def plot_mp_app(underlying:Underlying, is_update_data:bool=False, folder_path:st
     '''
     clean_path  = f'{folder_path}/{underlying.symbol}_clean_{underlying.start_date}_{underlying.end_date}.csv'.replace('-','')
     if is_update_data:
-        df_mp       = gen_market_profile(underlying, is_update_data=is_update_data, folder_path=folder_path)
+        df_mp       = gen_market_profile(folder_path, underlying, is_update_data=is_update_data)
         df_clean    = pd.read_csv(clean_path, index_col=0)
     else:
         df_clean    = pd.read_csv(clean_path, index_col=0)
@@ -251,6 +251,6 @@ if __name__ == "__main__":
         end_date='2024-03-31',
     )
     folder_path='data/market_profile'
-    is_update_data = True
+    is_update_data = False
 
     plot_mp_app(underlying, is_update_data, folder_path=folder_path)
