@@ -83,20 +83,23 @@ def plot_market_profile(df_tpo:pd.DataFrame, df_td_trade:pd.DataFrame) -> go.Fig
     return fig
 
 
-def plot_mp_app(underlying:Underlying, is_read_data:bool=False, resolution:str= IBBarSize.MIN_30, clean_path:str='', mp_path:str ='') -> go.Figure:
+def plot_mp_app(underlying:Underlying, is_update_data:bool=False, folder_path:str='') -> go.Figure:
     '''
     This is custom function to visualize the market profile.
     1. if is_read_data is True, read the data from the local file.
     2. if is_read_data is False, get the data from the IB server. <b> resolution </b> comes into play for this case.
     '''
-    if is_read_data:
-        df_clean            = pd.read_csv(clean_path, index_col=0)
+    clean_path  = f'{folder_path}/{underlying.symbol}_clean_{underlying.start_date}_{underlying.end_date}.csv'.replace('-','')
+    if is_update_data:
+        df_mp       = gen_market_profile(underlying, is_update_data=is_update_data, folder_path=folder_path)
+        df_clean    = pd.read_csv(clean_path, index_col=0)
+    else:
+        df_clean    = pd.read_csv(clean_path, index_col=0)
+        mp_path = f'{folder_path}/{underlying.symbol}_mp_{underlying.start_date}_{underlying.end_date}.csv'.replace('-','')
         df_mp               = pd.read_csv(mp_path, index_col=0)
         df_mp['tpo_count']  = df_mp['tpo_count'].apply(ast.literal_eval)
         df_mp['pocs']       = df_mp['pocs'].apply(ast.literal_eval)
-    else:
-        df_clean    = get_data_for_mp(underlying, resolution)
-        df_mp       = gen_market_profile(df_clean)
+
 
     fig = make_subplots(
         rows=1, cols=2,
@@ -225,8 +228,8 @@ def plot_mp_app(underlying:Underlying, is_read_data:bool=False, resolution:str= 
         pocs        = list(map(int, df_mp[df_mp.index == td]['pocs'].to_dict()[td]))
         val         = df_mp[df_mp.index == td]['val'].to_dict()[td]
         vah         = df_mp[df_mp.index == td]['vah'].to_dict()[td]
-        spkl         = df_mp[df_mp.index == td]['spkl'].to_dict()[td]
-        spkh         = df_mp[df_mp.index == td]['spkh'].to_dict()[td]
+        spkl        = df_mp[df_mp.index == td]['spkl'].to_dict()[td]
+        spkh        = df_mp[df_mp.index == td]['spkh'].to_dict()[td]
 
 
         df_tpo = pd.DataFrame(tpo_dict.items(), columns=['price', 'count'])
@@ -245,18 +248,9 @@ if __name__ == "__main__":
         contract_type='FUT',
         barSizeSetting=IBBarSize.DAY_1,
         start_date='2024-01-01',
-        end_date='2024-01-31',
+        end_date='2024-03-31',
     )
     folder_path='data/market_profile'
-    is_read_data = False
-    resolution = IBBarSize.MIN_30
+    is_update_data = True
 
-    clean_path = f'{folder_path}/{underlying.symbol}_{resolution.replace(' ', '')}_clean.csv'
-    mp_path    = f'{folder_path}/{underlying.symbol}_{resolution.replace(' ', '')}_mp.csv'
-    if not is_read_data:
-        if not os.path.exists(folder_path): os.makedirs(folder_path)
-        df_clean    = get_data_for_mp(underlying, resolution)
-        df_mp       = gen_market_profile(df_clean)
-        df_clean.to_csv(clean_path, index=True)
-        df_mp.to_csv(mp_path, index=True)
-    plot_mp_app(underlying, is_read_data, resolution, clean_path, mp_path)
+    plot_mp_app(underlying, is_update_data, folder_path=folder_path)

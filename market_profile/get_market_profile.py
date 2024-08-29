@@ -1,3 +1,4 @@
+import os
 import sys
 import numpy as np
 import pandas as pd
@@ -26,7 +27,7 @@ def combine_rows(df_td:pd.DataFrame, start_time:str, end_time:str) -> pd.DataFra
     return df_td
 
 
-def get_data_for_mp(underlying:Underlying, resolution:str= IBBarSize.MIN_30) -> pd.DataFrame:
+def get_data_for_mp(underlying:Underlying, folder_path:str, resolution:str= IBBarSize.MIN_30) -> pd.DataFrame:
     '''
     parameter resolution: '30min' or '1day'
     This is custom function to get the custom market data for constructing daily market profil.
@@ -50,14 +51,23 @@ def get_data_for_mp(underlying:Underlying, resolution:str= IBBarSize.MIN_30) -> 
         df_td = combine_rows(df_td, '21:30', '03:30')
         df_clean = df_clean._append(df_td)
 
+    file_name = f'{underlying.symbol}_clean_{underlying.start_date}_{underlying.end_date}.csv'.replace('-','')
+    if not os.path.exists(folder_path): os.makedirs(folder_path)
+    df_clean.to_csv(f'{folder_path}/{file_name}', index=True)
     return df_clean
 
 
-def gen_market_profile(df_clean:pd.DataFrame)->pd.DataFrame:
+def gen_market_profile(underlying:Underlying, resolution:str= IBBarSize.MIN_30, is_update_data:bool=True, folder_path:str='')->pd.DataFrame:
     '''
     This is custom function to transform 30min data into daily market profile.
     Return a df with columns: ['trade_date', 'open', 'high', 'low', 'close', 'volume', 'skewness', 'kurtosis', 'val', 'vah', 'pocs', 'tpo_count']
     '''
+    # get df_clean from local or api
+    if is_update_data:
+        df_clean = get_data_for_mp(underlying, folder_path=folder_path, resolution=resolution)
+    else:
+        file_name = f'{underlying.symbol}_clean_{underlying.start_date}_{underlying.end_date}.csv'.replace('-','')
+        df_clean = pd.read_csv(f'{folder_path}/{file_name}', index_col=0)
 
     trade_date_list     = df_clean["trade_date"].unique()
     tpo_count_list      = []
@@ -163,6 +173,10 @@ def gen_market_profile(df_clean:pd.DataFrame)->pd.DataFrame:
         index=trade_date_list,
     )
     df_mp.index.name = 'trade_date'
+
+    file_name = f'{underlying.symbol}_mp_{underlying.start_date}_{underlying.end_date}.csv'.replace('-','')
+    if not os.path.exists(folder_path): os.makedirs(folder_path)
+    df_mp.to_csv(f'{folder_path}/{file_name}', index=True)
     return df_mp
 
 if __name__ == "__main__":
@@ -170,12 +184,14 @@ if __name__ == "__main__":
         symbol='HSI',
         exchange='HKFE',
         contract_type='FUT',
-        barSizeSetting=IBBarSize.DAY_1,
+        barSizeSetting=IBBarSize.MIN_5,
         start_date='2024-01-01',
         end_date='2024-01-31',
     )
+    is_update_data = True
+    folder_path = 'data/market_profile'
 
-    df_clean = get_data_for_mp(underlying, IBBarSize.MIN_15)
-    print(df_clean.head())
-    df_mp = gen_market_profile(df_clean)
+    # df_clean = get_data_for_mp(underlying, IBBarSize.MIN_15)
+    # print(df_clean.head())
+    df_mp = gen_market_profile(underlying, is_update_data=is_update_data, folder_path=folder_path)
     print(df_mp.head())
