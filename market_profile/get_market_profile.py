@@ -64,6 +64,8 @@ def gen_market_profile(df_clean:pd.DataFrame)->pd.DataFrame:
     pocs_list           = []
     val_list            = []
     vah_list            = []
+    spike_upper_list    = []
+    spike_lower_list    = []
     skewness_list       = []
     kurtosis_list       = []
     open_price_list     = []
@@ -106,15 +108,33 @@ def gen_market_profile(df_clean:pd.DataFrame)->pd.DataFrame:
                 price for price, count in td_tpo_dict.items() if count == td_poc_count
             ]
 
-            tpo_stdev = int(np.std(price_record, ddof=1))
-            mode_price = int(np.mean(td_poc))
+            tpo_stdev   = int(np.std(price_record, ddof=1))
+            mode_price  = int(np.mean(td_poc))
+            val         = mode_price - tpo_stdev
+            vah         = mode_price + tpo_stdev
+
+            spkl = td_tpo_dict_start
+            for price in td_tpo_dict.keys():
+                if (price < val) & (td_tpo_dict[price] <= 2):
+                    spkl = price
+                else:
+                    break
+
+            spkh = td_tpo_dict_end
+            for price in sorted(td_tpo_dict.keys(), reverse=True):
+                if (price > vah) & (td_tpo_dict[price] <=2):
+                    spkh = price
+                else:
+                    break
 
             td_skew = round(skew(price_record), 4)
             td_kurt = round(kurtosis(price_record), 4)
 
             pocs_list.append(td_poc)
-            val_list.append(mode_price - tpo_stdev)
-            vah_list.append(mode_price + tpo_stdev)
+            val_list.append(val)
+            vah_list.append(vah)
+            spike_lower_list.append(spkl)
+            spike_upper_list.append(spkh)
             skewness_list.append(td_skew)
             kurtosis_list.append(td_kurt)
         else:
@@ -135,6 +155,8 @@ def gen_market_profile(df_clean:pd.DataFrame)->pd.DataFrame:
             "kurtosis"  : kurtosis_list,
             "val"       : val_list,
             "vah"       : vah_list,
+            "spkl"      : spike_lower_list,
+            "spkh"      : spike_upper_list,
             "pocs"      : pocs_list,
             "tpo_count" : tpo_count_list,
         },

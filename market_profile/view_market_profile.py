@@ -26,16 +26,18 @@ def plot_market_profile(df_tpo:pd.DataFrame, df_td_trade:pd.DataFrame) -> go.Fig
         rows=1, cols=2,
         column_widths=[0.3, 0.6],
         shared_yaxes=True,
+        horizontal_spacing=0.05,
     )
     fig.add_trace(
         go.Bar(
-            # x=list(tpo_dic.values()),
-            # y=list(tpo_dic.keys()),
             x = df_tpo['count'],
             y = df_tpo['price'],
             name='TPO',
             orientation='h',
             marker_color=df_tpo['color'],
+            text= 'Price:' + df_tpo['price'].astype(str) + ', ' + 'TPO: ' + df_tpo['count'].astype(str),
+            textposition='none',
+            hoverinfo='text',
         ),
         row=1, col=1,
     )
@@ -69,6 +71,7 @@ def plot_market_profile(df_tpo:pd.DataFrame, df_td_trade:pd.DataFrame) -> go.Fig
         yaxis=dict(
             side='right',
             tickformat=',',
+            showgrid=True,
             showspikes=True, spikemode='across', spikesnap='cursor', showline=True
         ),
         yaxis2=dict(
@@ -180,14 +183,16 @@ def plot_mp_app(underlying:Underlying, is_read_data:bool=False, resolution:str= 
         return sorted(tableData, key=lambda x: x[sort_by[0]['column_id']], reverse=sort_by[0]['direction'] == 'desc')
 
 
-    def color_tag(price:int, val:int, vah:int, pocs:List[int]) -> str:
+    def color_tag(price:int, val:int, vah:int, spkl, spkh, pocs:List[int]) -> str:
         '''
         This is custom function to color the price based on the market profile.
         '''
         if price in pocs:
             return 'gold'
         elif (price >= val and price <= vah):
-            return 'yellow'
+            return 'green'
+        elif (price <= spkl or price >= spkh):
+            return 'yellow' 
         else:
             return 'blue'
 
@@ -220,10 +225,13 @@ def plot_mp_app(underlying:Underlying, is_read_data:bool=False, resolution:str= 
         pocs        = list(map(int, df_mp[df_mp.index == td]['pocs'].to_dict()[td]))
         val         = df_mp[df_mp.index == td]['val'].to_dict()[td]
         vah         = df_mp[df_mp.index == td]['vah'].to_dict()[td]
+        spkl         = df_mp[df_mp.index == td]['spkl'].to_dict()[td]
+        spkh         = df_mp[df_mp.index == td]['spkh'].to_dict()[td]
+
 
         df_tpo = pd.DataFrame(tpo_dict.items(), columns=['price', 'count'])
 
-        df_tpo['color'] = [color_tag(price, val, vah, pocs) for price in df_tpo['price']]
+        df_tpo['color'] = [color_tag(price, val, vah, spkl, spkh, pocs) for price in df_tpo['price']]
         fig = plot_market_profile(df_tpo, df_td_trade)
 
         return style_data_conditional, fig
