@@ -15,11 +15,12 @@ from dh_backtest.models.remote_data import get_spot_future_ib
 from dh_backtest.backtest_engine import BacktestEngine
 # local imports
 from get_market_profile import gen_market_profile
+from visual_bt_results import plot_app
 
 
-pd.set_option('display.max_columns', None)
-pd.set_option('display.max_rows', None)
-pd.set_option('display.width', None)
+# pd.set_option('display.max_columns', None)
+# pd.set_option('display.max_rows', None)
+# pd.set_option('display.width', 1000)
 
 
 def generate_signal(df:pd.DataFrame, para_comb:dict, underlying:Underlying) -> pd.DataFrame:
@@ -27,6 +28,12 @@ def generate_signal(df:pd.DataFrame, para_comb:dict, underlying:Underlying) -> p
     this is custom function to generate signals based on the historical data.
     return the input dataframe with extra column ['calculation_col_1', 'calculation_col_2', 'signal'].
     '''
+    # trim df and limit time before 10:45am
+    df.set_index('datetime', inplace=True)
+    df.index = pd.to_datetime(df.index)
+    df = df.between_time('8:00', '10:45')
+    df.reset_index(drop=False, inplace=True)
+
     is_update_data = False
     if is_update_data:
         df_mp = gen_market_profile('data/market_profile', underlying, is_update_data=True)
@@ -37,33 +44,23 @@ def generate_signal(df:pd.DataFrame, para_comb:dict, underlying:Underlying) -> p
     
     start_date_stamp = datetime.strptime(underlying.start_date, '%Y-%m-%d').timestamp() + 3600*8
     df_mp['for_td'] = df_mp.index.to_series().shift(-1)
-    # print(df_mp.head())
-    df = pd.merge(df, df_mp[['for_td', 'pocs', 'spkl', 'spkh', 'tpo_count']], left_on='trade_date', right_on='for_td', how='left')
+    df = pd.merge(df, df_mp[['for_td', 'pocs', 'val', 'vah', 'spkl', 'spkh', 'tpo_count']], left_on='trade_date', right_on='for_td', how='left')
     df = df[df['timestamp'] > start_date_stamp]
     df.set_index('timestamp', inplace=True)
 
     df['signal'] = np.where(
-        df['trade_date'].shift(1) != df['trade_date'].shift(2),
+        df['trade_date'] != df['trade_date'].shift(1),
           np.where(
-            df['close'].shift(1) < df['spkl'].shift(1),
+            df['close'] < df['spkl'],
             'buy',
             np.where(
-                df['close'].shift(1) > df['spkh'].shift(1),
+                df['close'] > df['spkh'],
                 'sell',
                 'no'
             )
           ),
           ''
     )
-    df['target']    = np.where(df['signal'] == 'buy', 
-                               df['pocs'].apply(lambda x: x[0]), 
-                               np.where(df['signal']=='sell', df['pocs'].apply(lambda x: x[-1]), np.nan)) 
-    df['stop']      = np.where(df['signal'] == 'buy', 
-                               df['tpo_count'].apply(lambda x: list(x.keys())[0]), 
-                               np.where(df['signal']=='sell', df['tpo_count'].apply(lambda x: list(x.keys())[-1]), np.nan))
-
-    # print(df.head(300))
-    # sys.exit()
     return df
 
 
@@ -80,80 +77,91 @@ def action_on_signal(df, para_comb, trade_account) -> pd.DataFrame:
     acc_columns is the columns recording the changes of the trading account.
     '''
     my_acc = trade_account
+    my_acc.oco = {'amount': 0}
+    stop_torlorance = 1 + float(para_comb['stop_loss'].split(':')[1])
 
+
+    # duplicate the row after the row with signal -> for the case open and close position in the same bar
+    target_row_indices = df.index[df['signal'].shift(1).isin(['buy', 'sell'])].tolist()
+    rows_to_duplicate = df.loc[target_row_indices]
+    rows_to_duplicate.index = rows_to_duplicate.index + 1
+    df = pd.concat([df, rows_to_duplicate], axis=0)
+    df = df.sort_index()
+
+    is_signal_buy = False
+    is_signal_sell= False
     for index, row in df.iterrows():
-        # step 1: determine if it is time to open position
         ''' Strategy: 
         1. if signal is buy and current position long or zero, add a long position
         2. if signal is sell and current position short or zero, add a short position
         3. if the signal inicate different direction from current position, skep this step
         '''
         initial_margin_per_contract = row['open']* my_acc.contract_multiplier * my_acc.margin_rate
-        is_signal_buy = row['signal'] == 'buy'
-        is_signal_sell = row['signal'] == 'sell'
-        if my_acc.bal_avialable > initial_margin_per_contract:
-            if is_signal_buy and my_acc.position_size >= 0:
-                commission = my_acc.open_position(1, row['open'])
-                df.loc[index, 'action'] = 'buy'
-                df.loc[index, 'logic'] = 'open'
-                df.loc[index, 't_size'] = 1
-                df.loc[index, 't_price'] = row['open']
-                df.loc[index, 'commission'] = commission
-                df.loc[index, 'pnl_action'] = -commission
+        if is_signal_buy or is_signal_sell:
+            # step 1: determine if it is time to open position
+            if my_acc.bal_avialable > initial_margin_per_contract:
+                if is_signal_buy and my_acc.position_size >= 0:
+                    commission          = my_acc.open_position(1, row['open'])
+                    df.loc[index, 'action']       = 'buy'
+                    df.loc[index, 'logic']        = 'open'
+                    df.loc[index, 't_size']       = 1
+                    df.loc[index, 't_price']      = row['open']
+                    df.loc[index, 'commission']   = commission
+                    df.loc[index, 'pnl_action']   = -commission
+                    stop_loss_level = list(row['tpo_count'].keys())[0] * stop_torlorance
+                    if para_comb['target_profit'] == 'first_poc':
+                        my_acc.oco  = {'amount': -1, 'target': row['pocs'][0], 'stop': stop_loss_level}
+                    elif para_comb['target_profit'] == 'last_poc':
+                        my_acc.oco  = {'amount': -1, 'target': row['pocs'][-1], 'stop': stop_loss_level}
+                    elif para_comb['target_profit'] == 'close_va_b':
+                        my_acc.oco  = {'amount': -1, 'target': row['val'], 'stop': stop_loss_level}
+                    elif para_comb['target_profit'] == 'far_va_b':
+                        my_acc.oco  = {'amount': -1, 'target': row['vah'], 'stop': stop_loss_level}
 
-            elif is_signal_sell and my_acc.position_size <= 0:
-                commission = my_acc.open_position(-1, row['open'])
-                df.loc[index, 'action'] = 'sell'
-                df.loc[index, 'logic'] = 'open'
-                df.loc[index, 't_size'] = -1
-                df.loc[index, 't_price'] = row['open']
-                df.loc[index, 'commission'] = commission
-                df.loc[index, 'pnl_action'] = -commission
-
+                elif is_signal_sell and my_acc.position_size <= 0:
+                    commission          = my_acc.open_position(-1, row['open'])
+                    df.loc[index, 'action']       = 'sell'
+                    df.loc[index, 'logic']        = 'open'
+                    df.loc[index, 't_size']       = -1
+                    df.loc[index, 't_price']      = row['open']
+                    df.loc[index, 'commission']   = commission
+                    df.loc[index, 'pnl_action']   = -commission
+                    stop_loss_level = list(row['tpo_count'].keys())[-1] * stop_torlorance
+                    if para_comb['target_profit'] == 'first_poc':
+                        my_acc.oco  = {'amount': 1, 'target': row['pocs'][-1], 'stop': stop_loss_level}
+                    elif para_comb['target_profit'] == 'last_poc':
+                        my_acc.oco  = {'amount': 1, 'target': row['pocs'][0], 'stop': stop_loss_level}
+                    elif para_comb['target_profit'] == 'close_va_b':
+                        my_acc.oco  = {'amount': 1, 'target': row['vah'], 'stop': stop_loss_level}
+                    elif para_comb['target_profit'] == 'far_va_b':
+                        my_acc.oco  = {'amount': 1, 'target': row['val'], 'stop': stop_loss_level}
+                    # my_acc.oco          = {'amount': 1, 'target': row['pocs'][-1], 'stop': list(row['tpo_count'].keys())[-1]*stop_torlorance}
+            else:
+                pass
         else:
-            pass
-
-
-        # step 2: determine if it is time to close position
-        ''' Strategy:
-        1. when the position profit reach the [pocs], close the position
-        2. when the position loss reach the stop loss, close the position
-        3. when the margin call, close the position -> this is handled in the mark_to_market function
-        '''
-        
-        # target_pnl  = para_comb['target_profit']
-        # stop_loss   = -para_comb['stop_loss']
-        # contract_pnl = 0
-        # if my_acc.position_size != 0:
-        #     if my_acc.position_size > 0:
-        #         contract_pnl = row['close'] - my_acc.position_price
-        #     elif my_acc.position_size < 0:
-        #         contract_pnl = my_acc.position_price - row['close']
-
-        #     if contract_pnl >= target_pnl or contract_pnl <= stop_loss:
-        #         # cprint(f"Closing position at {row['close']}, P/L: {contract_pnl}", 'yellow')
-        #         # print(f'curren position size: {my_acc.position_size}, price: {my_acc.position_price}, mkt price: {row["close"]}')
-        #         df.loc[index, 'action']     = 'close'
-        #         df.loc[index, 'logic']      = 'reach profit target' if contract_pnl >= target_pnl else 'reach stop loss'
-        #         df.loc[index, 't_size']     = - my_acc.position_size
-        #         df.loc[index, 't_price']    = row['close']
-        #         commission, pnl_realized    = my_acc.close_position(-my_acc.position_size, row['close'])
-        #         df.loc[index, 'commission'] = commission
-        #         df.loc[index, 'pnl_action'] = pnl_realized
-        
-        is_close_position = False
-        if my_acc.position_size != 0:
-            if (datetime.fromtimestamp(index).hour >= 10) & (datetime.fromtimestamp(index).minute>=30):
-                # reached the max holding period
-                is_close_position = True
-            elif df.loc[index,'pocs'][0] in range(row['low'], row['high']+1):
-                # reached target price
-                is_close_position = True
-
-
-
-        
-
+            # step 2: determine if it is time to close position        
+            is_close_position = False
+            if my_acc.oco['amount'] != 0:
+                if (datetime.fromtimestamp(index).hour >= 10) & (datetime.fromtimestamp(index).minute>=30):
+                    # reached the max holding period
+                    is_close_position = True
+                    df.loc[index, 'logic']    = 'max holding period'
+                    df.loc[index, 't_price']  = row['open']
+                elif my_acc.oco['target'] in range(row['low'], row['high']+1):
+                    # reached target price
+                    is_close_position = True
+                    df.loc[index, 'logic']    = 'reach profit target'
+                    df.loc[index, 't_price']  = my_acc.oco['target']
+                elif my_acc.oco['stop'] in range(row['low'], row['high']+1):
+                    # reached stop loss
+                    is_close_position = True
+                    df.loc[index, 'logic']    = 'stop loss'
+                    df.loc[index, 't_price']  = my_acc.oco['stop']
+            if is_close_position:
+                df.loc[index, 'action']                       = 'close'
+                df.loc[index, 't_size']                       = my_acc.oco['amount']
+                df.loc[index, 'commission'], df.loc[index, 'pnl_action']= my_acc.close_position(my_acc.oco['amount'], df.loc[index, 't_price'])
+                my_acc.oco = {'amount':0}        
 
         # step 3: update the account and record the action if any
         mtm_result =  my_acc.mark_to_market(row['close'])
@@ -173,7 +181,17 @@ def action_on_signal(df, para_comb, trade_account) -> pd.DataFrame:
         df.loc[index, 'bal_avialable']  = float(my_acc.bal_avialable)
         df.loc[index, 'margin_initial'] = float(my_acc.margin_initial)
         df.loc[index, 'cap_usage']      = f'{my_acc.cap_usage:.2f}%'
-    
+
+        if row['signal'] == 'buy':
+            is_signal_buy = True
+            is_signal_sell= False
+        elif row['signal'] == 'sell':
+            is_signal_buy = False
+            is_signal_sell= True
+        else:
+            is_signal_buy = False
+            is_signal_sell= False
+
     return df
 
 
@@ -184,26 +202,28 @@ if __name__ == "__main__":
         exchange='HKFE',
         contract_type='FUT',
         barSizeSetting=IBBarSize.MIN_5,
-        start_date='2024-01-01',
+        start_date='2023-01-01',
         end_date='2024-03-31',
     )
 
 
     para_dict = {
-        'stop_loss'         : [20],
-        'target_profit'     : [60],
+        # 'open_direction'    : ['long_only', 'short_only', 'whatever'],
+        'stop_loss'         : ['spike:0.0', 'spike:0.01', 'spike:0.025', 'spike:0.05', 'spike:0.075', 'spike:0.1', ],
+        'target_profit'     : ['first_poc', 'last_poc', 'close_va_b', 'far_va_b'],
     }
 
     engine = BacktestEngine(
-        is_update_data      =False,
-        is_rerun_backtest   =True,
-        underlying          =underlying,
-        para_dict           =para_dict,
-        trade_account       =FutureTradingAccount(150_000),
-        generate_signal     =generate_signal,
-        action_on_signal    =action_on_signal,
-        get_data_from_api   =get_spot_future_ib,
-        folder_path         ='data/market_profile',
+        is_update_data      = False,
+        is_rerun_backtest   = True,
+        underlying          = underlying,
+        para_dict           = para_dict,
+        trade_account       = FutureTradingAccount(150_000),
+        generate_signal     = generate_signal,
+        action_on_signal    = action_on_signal,
+        get_data_from_api   = get_spot_future_ib,
+        folder_path         = 'data/market_profile',
+        # plot_app            = plot_app,
     )
 
     engine.run_engine()
