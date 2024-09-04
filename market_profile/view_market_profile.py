@@ -191,7 +191,7 @@ def plot_mp_app(underlying:Underlying, is_update_data:bool=False, folder_path:st
         This is custom function to color the price based on the market profile.
         '''
         if price in pocs:
-            return 'gold'
+            return 'red'
         elif (price >= val and price <= vah):
             return 'green'
         elif (price <= spkl or price >= spkh):
@@ -239,7 +239,7 @@ def plot_mp_app(underlying:Underlying, is_update_data:bool=False, folder_path:st
 
         return style_data_conditional, fig
     
-    app.run(debug=True)
+    app.run(debug=True, port=8053)
 
 if __name__ == "__main__":
     underlying = Underlying(
@@ -247,8 +247,8 @@ if __name__ == "__main__":
         exchange='HKFE',
         contract_type='FUT',
         barSizeSetting=IBBarSize.DAY_1,
-        start_date='2024-01-01',
-        end_date='2024-03-31',
+        start_date='2024-08-01',
+        end_date='2024-08-30',
     )
     folder_path='data/market_profile'
     is_update_data = False
