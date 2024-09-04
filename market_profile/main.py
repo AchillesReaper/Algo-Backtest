@@ -6,6 +6,7 @@ step 2: if market open on spike -> forecasting price reverse to the nearest POC
 
 import ast
 from datetime import datetime
+import json
 import sys
 import numpy as np
 import pandas as pd
@@ -29,6 +30,7 @@ def generate_signal(df:pd.DataFrame, para_comb:dict, underlying:Underlying) -> p
     return the input dataframe with extra column ['calculation_col_1', 'calculation_col_2', 'signal'].
     '''
     # trim df and limit time before 10:45am
+    df.reset_index(drop=False, inplace=True)
     df.set_index('datetime', inplace=True)
     df.index = pd.to_datetime(df.index)
     df = df.between_time('8:00', '10:45')
@@ -51,10 +53,10 @@ def generate_signal(df:pd.DataFrame, para_comb:dict, underlying:Underlying) -> p
     df['signal'] = np.where(
         df['trade_date'] != df['trade_date'].shift(1),
           np.where(
-            df['close'] < df['spkl'],
+            (df['close'] < df['spkl']) & (df['close'] > df['tpo_count'].apply(lambda x: list(x.keys())[0])),
             'buy',
             np.where(
-                df['close'] > df['spkh'],
+                (df['close'] > df['spkh']) & (df['close'] < df['tpo_count'].apply(lambda x: list(x.keys())[0])),
                 'sell',
                 'no'
             )
@@ -84,7 +86,9 @@ def action_on_signal(df, para_comb, trade_account) -> pd.DataFrame:
     # duplicate the row after the row with signal -> for the case open and close position in the same bar
     target_row_indices = df.index[df['signal'].shift(1).isin(['buy', 'sell'])].tolist()
     rows_to_duplicate = df.loc[target_row_indices]
-    rows_to_duplicate.index = rows_to_duplicate.index + 1
+    rows_to_duplicate.index = rows_to_duplicate.index + 60
+    rows_to_duplicate['datetime'] = rows_to_duplicate['datetime'] + pd.Timedelta(minutes=1)
+    
     df = pd.concat([df, rows_to_duplicate], axis=0)
     df = df.sort_index()
 
@@ -117,6 +121,9 @@ def action_on_signal(df, para_comb, trade_account) -> pd.DataFrame:
                         my_acc.oco  = {'amount': -1, 'target': row['val'], 'stop': stop_loss_level}
                     elif para_comb['target_profit'] == 'far_va_b':
                         my_acc.oco  = {'amount': -1, 'target': row['vah'], 'stop': stop_loss_level}
+                    else:
+                        pass
+                    df.loc[index, 'oco'] = json.dumps(my_acc.oco)
 
                 elif is_signal_sell and my_acc.position_size <= 0:
                     commission          = my_acc.open_position(-1, row['open'])
@@ -135,14 +142,16 @@ def action_on_signal(df, para_comb, trade_account) -> pd.DataFrame:
                         my_acc.oco  = {'amount': 1, 'target': row['vah'], 'stop': stop_loss_level}
                     elif para_comb['target_profit'] == 'far_va_b':
                         my_acc.oco  = {'amount': 1, 'target': row['val'], 'stop': stop_loss_level}
-                    # my_acc.oco          = {'amount': 1, 'target': row['pocs'][-1], 'stop': list(row['tpo_count'].keys())[-1]*stop_torlorance}
+                    else:
+                        pass
+                    df.loc[index, 'oco'] = json.dumps(my_acc.oco)
             else:
                 pass
         else:
             # step 2: determine if it is time to close position        
             is_close_position = False
             if my_acc.oco['amount'] != 0:
-                if (datetime.fromtimestamp(index).hour >= 10) & (datetime.fromtimestamp(index).minute>=30):
+                if (df.loc[index, 'datetime'].hour >= 10) & (df.loc[index, 'datetime'].fromtimestamp(index).minute>=30):
                     # reached the max holding period
                     is_close_position = True
                     df.loc[index, 'logic']    = 'max holding period'
@@ -182,15 +191,17 @@ def action_on_signal(df, para_comb, trade_account) -> pd.DataFrame:
         df.loc[index, 'margin_initial'] = float(my_acc.margin_initial)
         df.loc[index, 'cap_usage']      = f'{my_acc.cap_usage:.2f}%'
 
-        if row['signal'] == 'buy':
-            is_signal_buy = True
-            is_signal_sell= False
-        elif row['signal'] == 'sell':
-            is_signal_buy = False
-            is_signal_sell= True
-        else:
-            is_signal_buy = False
-            is_signal_sell= False
+        # update the signal status
+        match para_comb['open_direction']:
+            case 'long_only':
+                is_signal_sell= False
+                is_signal_buy = True if (row['signal'] == 'buy') and (row['volume'] > 0) else False   
+            case 'short_only':
+                is_signal_buy = False
+                is_signal_sell= True if (row['signal'] == 'sell') and (row['volume'] > 0) else False
+            case 'whatever':
+                is_signal_buy = True if row['signal'] == 'buy' else False
+                is_signal_sell= True if row['signal'] == 'sell' else False
 
     return df
 
@@ -202,20 +213,21 @@ if __name__ == "__main__":
         exchange='HKFE',
         contract_type='FUT',
         barSizeSetting=IBBarSize.MIN_5,
-        start_date='2023-01-01',
-        end_date='2024-03-31',
+        start_date='2024-01-01',
+        end_date='2024-08-30',
     )
 
 
     para_dict = {
-        # 'open_direction'    : ['long_only', 'short_only', 'whatever'],
-        'stop_loss'         : ['spike:0.0', 'spike:0.01', 'spike:0.025', 'spike:0.05', 'spike:0.075', 'spike:0.1', ],
-        'target_profit'     : ['first_poc', 'last_poc', 'close_va_b', 'far_va_b'],
+        'open_direction'    : ['whatever'],
+        'stop_loss'         : ['spike:0.0', 'spike:0.01'],
+        'target_profit'     : ['first_poc'],
     }
 
     engine = BacktestEngine(
         is_update_data      = False,
-        is_rerun_backtest   = True,
+        is_rerun_backtest   = False,
+        # is_rerun_backtest   = False,
         underlying          = underlying,
         para_dict           = para_dict,
         trade_account       = FutureTradingAccount(150_000),
@@ -223,7 +235,7 @@ if __name__ == "__main__":
         action_on_signal    = action_on_signal,
         get_data_from_api   = get_spot_future_ib,
         folder_path         = 'data/market_profile',
-        # plot_app            = plot_app,
+        plot_app            = plot_app,
     )
 
     engine.run_engine()
