@@ -39,7 +39,6 @@ def plot_daily_detail(df_bt_result_td:pd.DataFrame):
     spkh = df_bt_result_td['spkh'].iloc[0]
     df_tpo['color'] = df_tpo['price'].apply(lambda x: color_tag(x, val, vah, spkl, spkh, poc_list))
 
-    print(df_tpo)
     fig = make_subplots(
         rows=1, cols=2,
         column_widths=[0.3, 0.6],
@@ -164,7 +163,6 @@ def plot_daily_detail(df_bt_result_td:pd.DataFrame):
     return fig
 
 
-
 def plot_curve_detail(df_bt_result:pd.DataFrame):
     fig = make_subplots(specs=[[{'secondary_y': True}]])
     # price movement of the underlying
@@ -256,9 +254,16 @@ def plot_curve_detail(df_bt_result:pd.DataFrame):
     )
 
     fig.update_layout(
-        yaxis=dict(tickformat=',', autorange=True),
+        title= df_bt_result.attrs["ref_tag"],
+        xaxis=dict(
+            showticklabels=True, autorange=True, type='date',
+            showspikes=True, spikemode='across', spikesnap='cursor', showline=True
+        ),
+        yaxis=dict(
+            tickformat=',', autorange=True,
+            showspikes=True, spikemode='across', spikesnap='cursor', showline=True
+        ),
         yaxis2=dict(tickformat=',', autorange=True),
-        xaxis=dict(showticklabels=True, autorange=True, type='date'),
         autosize=True,
         xaxis_rangeslider_visible=False,
         height=None,
@@ -295,7 +300,12 @@ def plot_all_curves(df_bt_result_list: List[pd.DataFrame]):
         ))
 
     fig.update_layout(
-        height=400,
+        title={
+            'text': 'Equity Curves',
+            'xanchor': 'center',
+            'yanchor': 'top',
+        },
+        height=800,
         showlegend=False,
         hovermode='closest',
         paper_bgcolor='#F8EDE3',
@@ -367,7 +377,7 @@ def plot_app(df_bt_result_list: List[pd.DataFrame]):
                                 active_tab='strategy_detail',
                             ),
                             dcc.Graph(id='graph_curve_detail', figure={}, style=style_element),
-                            dcc.Graph(id='graph_daily_detail', figure={}, style=style_element),
+                            dcc.Graph(id='graph_daily_detail', figure={}, style={**style_element, 'display': 'none'}),
                             dcc.Graph(id='grapph_all_curves', figure=plot_all_curves(df_bt_result_list), style=style_element),
                         ]
                     ),
@@ -447,7 +457,7 @@ def plot_app(df_bt_result_list: List[pd.DataFrame]):
 
     @app.callback(
         [
-            Output('graph_curve_detail', 'style'), 
+            Output('graph_curve_detail', 'style'),
             Output('graph_daily_detail', 'style'),
             Output('grapph_all_curves', 'style')
         ],
@@ -463,10 +473,14 @@ def plot_app(df_bt_result_list: List[pd.DataFrame]):
     # update state of current reference
     @app.callback(
         Output('current_ref', 'data'),
-        [Input('grapph_all_curves', 'clickData'), Input('bt_result_table', 'active_cell'),],
+        Input('grapph_all_curves', 'clickData'), 
+        Input('bt_result_table', 'active_cell'),
+        Input('bt_result_table', 'page_current'),
+        Input('bt_result_table', 'page_size'),
         State('bt_result_table', 'data')
     )
-    def update_current_ref(clickData, active_cell, tableData):
+    def update_current_ref(clickData, active_cell, page_current, page_size, tableData):
+        print(f'page_current: {page_current}, page_size: {page_size}')
         ctx = dash.callback_context
         if not ctx.triggered:
             raise PreventUpdate
@@ -480,7 +494,9 @@ def plot_app(df_bt_result_list: List[pd.DataFrame]):
             return ref_tag
         
         if trigger_id == 'bt_result_table' and active_cell:
-            ref_tag = tableData[active_cell['row']]['ref_tag']
+            page_current = 0 if page_current is None else page_current
+            row = active_cell['row'] + page_current * page_size
+            ref_tag = tableData[row]['ref_tag']
             cprint(f'current_ref: {ref_tag}', 'yellow')
             return ref_tag
 
@@ -496,13 +512,14 @@ def plot_app(df_bt_result_list: List[pd.DataFrame]):
         ],
         [
             Input('current_ref', 'data'),
+            Input('graph_curve_detail', 'relayoutData'),
         ],
         [
             State('grapph_all_curves', 'figure'),
         ],
         allow_duplicate=True
     )
-    def update_for_ceuurent_ref(current_ref, figure_all_curves):
+    def update_for_ceuurent_ref(current_ref, relayoutData, figure_all_curves):
         ctx = dash.callback_context
         if (not ctx.triggered) or (not current_ref): raise PreventUpdate
         
@@ -518,6 +535,17 @@ def plot_app(df_bt_result_list: List[pd.DataFrame]):
                     trace['line']['width'] = 1
                     trace['opacity'] = 0.5
             figure_curve_detail = plot_curve_detail(df_bt_result_dict[current_ref])
+        # If relayoutData exists, update the y-axis ranges
+        if relayoutData and 'xaxis.range[0]' in relayoutData and 'xaxis.range[1]' in relayoutData:
+            cprint(f'relayoutData: {relayoutData}', 'green')
+            x_min = relayoutData['xaxis.range[0]']
+            x_max = relayoutData['xaxis.range[1]']
+
+            # Filter data based on the selected x range
+            filtered_df = df_bt_result_dict[current_ref][['datetime', 'nav', 'open', 'low', 'high', 'close', 't_size', 't_price', 'signal', 'action', 'logic', 'pnl_action']]
+            filtered_df = filtered_df[(filtered_df['datetime'] >= x_min) & (filtered_df['datetime'] <= x_max)]
+            # Update y-axis ranges to fit the filtered data
+            figure_curve_detail = plot_curve_detail(filtered_df)
 
         style_data_conditional = [{
             'if': {'filter_query': f'{{ref_tag}} eq "{current_ref}"'},
